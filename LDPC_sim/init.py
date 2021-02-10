@@ -32,20 +32,15 @@ class Init:
         #generator matrix and parity-check matrix
         self.codegenerator = codegenerator.CodeGenerator()
         if self.LDPC_code == 0:
-            self._primaryLDPC(self.f_name)
+            self.parity_check_matrix,self.generator_matrix = self.codegenerator.inputMacKayCode(f_name)
+            self.wr,self.wc,self.xlen,self.ylen = self.codegenerator.wr,self.codegenerator.wc,self.codegenerator.xlen,self.codegenerator.ylen
         elif self.LDPC_code == 2:
-            self._thridLDPC()
+            self.parity_check_matrix,self.generator_matrix = self.codegenerator.QCLDPCCode(self.len_mult_num)
+            self.wr,self.wc,self.xlen,self.ylen = 4,3,14*self.len_mult_num,7*self.len_mult_num
 
         #decoding_tool
         self.decoding_tool = decoding.decoding_algorithm(self.parity_check_matrix,self.ylen,self.xlen,self.clip_num)
 
-    def _primaryLDPC(self,f_name):
-        self.parity_check_matrix,self.generator_matrix = self.codegenerator.inputMacKayCode(f_name)
-        self.wr,self.wc,self.xlen,self.ylen = self.codegenerator.wr,self.codegenerator.wc,self.codegenerator.xlen,self.codegenerator.ylen
-
-    def _thridLDPC(self):
-        self.parity_check_matrix,self.generator_matrix = self.codegenerator.QCLDPCCode(self.len_mult_num)
-        self.wr,self.wc,self.xlen,self.ylen = 4,3,14*self.len_mult_num,7*self.len_mult_num
 
     # for single case and print the result
     def signal_tranmission(self):
@@ -143,42 +138,7 @@ class Init:
 
         return prob_BER,probaility_block_error,prob_detected_block_error,prob_detected_BER,prob_undetected_block_error,prob_undetected_BER
 
-    '''
-        for running product code
-        1.message -> the passing message
-        2.message_copy -> for compare the final_message and output the hamming distance
-        3.out_message -> hard_decision work
-    '''
-
-
-        # if print_flag == 1:
-        #     print("out_message_hard_decision_row")
-        #     print(out_msg_hard_decision_row)
-        #     print("out_message_hard_decision_col")
-        #     print(out_msg_hard_decision_col)
-        #     print("decoding_message_row")
-        #     print(decoding_msg_row)
-        #     print("decoding_message_col")
-        #     print(decoding_msg_col)
-        #     print("hamming_distance_row_for_hard_decision_and_after_SPADecoding")
-        #     hamming_dist_hard_row_sum = int(hamming_dist_row.sum())
-        #     print(hamming_dist_row,hamming_dist_hard_row_sum)
-        #     print("hamming_distance_col_for_hard_decision_and_after_SPADecoding")
-        #     hamming_dist_hard_col_sum = int(hamming_dist_col.sum())
-        #     print(hamming_dist_col,hamming_dist_hard_col_sum)
-        #     print("t")
-        #     print(ylen/2)
-        #     print("message_copy")
-        #     print(msg_copy)
-        #     print("row_message")
-        #     print(row_msg)
-        #     print("hamming_distance_row_message")
-        #     print(hamming_dist_row_msg)
-        #     print("col_message")
-        #     print(col_msg)
-        #     print("hamming_distance_col_message")
-        #     print(hamming_dist_col_msg)
-
+    # 0 -> normal mode
     def messageSendingSimulation(self,print_flag):
 
         xlen, ylen = self.xlen, self.ylen
@@ -227,6 +187,7 @@ class Init:
 
         return message_hamming_dist,block_error_flag,block_error_type_flag,codeword_hard_hamming_dist
 
+    # 1. Product code A
     def messageSendingSimulation1(self,print_flag):
 
         # message generator
@@ -249,15 +210,6 @@ class Init:
         #     Encoding part 
         #     ------------------------------------------------------------
         #     Decoding part
-        #     1.hard_decision and output the H*(X^T), 
-        #     if the row and cols is equal to (0^T),then just end.
-
-        #     2.otherwise, do the SPA alogrithm to the cols and rows, using hamming distance to count it,
-
-        #     3.If hamming distance(C,R) == 0, then output, 
-        #     hamming distance(C,R) != 0 and < t, then
-        #     SPA again, If > t, then declearing failure.
-
         # '''
 
         # hard-decision
@@ -290,7 +242,6 @@ class Init:
             decoding_msg_col = np.append(decoding_msg_col,self.decoding_tool.sumProductAlgorithmWithIterationForPC(msg_that_LLR_col[k],self.iteration)[1],axis=0)
         decoding_msg_col = np.resize(decoding_msg_col,(ylen,xlen))
 
-        output_msg = decoding_msg_col[:ylen,:ylen]
         decoded_output = np.where(decoding_msg_col > 0,0,1)
 
         hamming_dist_msg = np.count_nonzero(msg_copy != decoded_output[:ylen,:ylen])
@@ -311,14 +262,16 @@ class Init:
 
             return hamming_dist_msg,1,isDetectedError,codeword_hard_hamming_dist/self.ylen
 
-
+    # 2 -> Product Code B
     def messageSendingSimulation2(self,print_flag):
 
         # message generator
         xlen, ylen = self.xlen, self.ylen
         msg = np.random.randint(2,size=(ylen,ylen))
+        # msg = np.zeros((ylen,ylen))
 
         msg_copy = msg.copy() # to backup and compare the result
+        # msg_copy = msg_copy.transpose()
 
         # mult it and transpose and matmul one more time
         msg = np.matmul(msg,self.generator_matrix)
@@ -345,32 +298,52 @@ class Init:
         decoding_msg_row = np.clip(decoding_msg_row,-self.clip_num,self.clip_num)
 
         # I use the row_result and do it again for the cols
-        decoding_msg_row = decoding_msg_row[:xlen,:ylen].transpose()
+        decoding_msg_row = decoding_msg_row.transpose()
+
         decoding_msg_col = np.array([])
 
         for k in np.arange(ylen):
             decoding_msg_col = np.append(decoding_msg_col,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_row[k],self.iteration)[1],axis=0)
-        decoding_msg_col = np.resize(decoding_msg_col,(ylen,xlen))
+        for k in np.arange(ylen):
+            decoding_msg_col = np.append(decoding_msg_col,decoding_msg_row[ylen+k],axis=0)
 
-        output_msg = decoding_msg_col[:ylen,:ylen]
-        decoded_output = np.where(decoding_msg_col > 0,0,1)
+        decoding_msg_col = np.resize(decoding_msg_col,(xlen,xlen))
+        decoding_msg_col = np.clip(decoding_msg_col,-self.clip_num,self.clip_num)
+
+        decoding_msg_col = decoding_msg_col.transpose()
+        decoding_msg_row_final = np.array([])
+
+        for k in range(xlen):
+            decoding_msg_row_final = np.append(decoding_msg_row_final,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_col[k],self.iteration)[1],axis=0)
+
+        decoding_msg_row_final = np.resize(decoding_msg_row_final,(xlen,xlen))
+        decoding_msg_row_final = decoding_msg_row_final.transpose()
+        decoding_msg_row_final = np.clip(decoding_msg_row_final,-self.clip_num,self.clip_num)
+
+        decoding_msg_col_final = np.array([])
+        for k in np.arange(ylen):
+            decoding_msg_col_final = np.append(decoding_msg_col_final,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_row_final[k],self.iteration)[1],axis=0)
+
+        decoding_msg_col_final = np.resize(decoding_msg_col_final,(ylen,xlen))
+
+        decoded_output = np.where(decoding_msg_col_final > 0,0,1)
 
         hamming_dist_msg = np.count_nonzero(msg_copy != decoded_output[:ylen,:ylen])
 
         if hamming_dist_msg == 0:
             return 0,0,-1,0
         else:
-            codeword_hard_hamming_dist = np.count_nonzero(hard_decision_output[:ylen,:ylen]!=decoded_output[:ylen,:ylen])
+            codeword_hard_hamming_dist = np.count_nonzero(hard_decision_output[:ylen,:ylen]!=msg_copy[:ylen,:ylen])
             hard_decision_check = np.matmul(self.parity_check_matrix,decoded_output.transpose()) % 2
-            is_detected_rrr = np.sum(hard_decision_check)
-            if is_detected_rrr == 0:
-                is_detected_rrr = 1
+            is_detected_err = np.sum(hard_decision_check)
+            if is_detected_err == 0:
+                is_detected_err = 1
             else:
-                is_detected_rrr = 0
+                is_detected_err = 0
 
                 #TODO blcok_error
 
-            return hamming_dist_msg / self.ylen,1,is_detected_rrr,codeword_hard_hamming_dist/self.ylen
+            return hamming_dist_msg / self.ylen,1,is_detected_err,codeword_hard_hamming_dist/self.ylen
 
     def cal_SNR(self):
 
@@ -442,14 +415,14 @@ def runOnlyOneTimeLDPC():
 
     len_mult_num = 1
 
-    noise_set = 0.1
-    print_flag = 0
-    iteration = 10
-    clip_num = 7
+    noise_set = 0.3
+    print_flag = 1
+    iteration = 20
+    clip_num = 4
     LDPC_code = 2
     LDPC_type = 2
 
-    init = Init(noise_set,len_mult_num,LDPC_code,iteration,7,"",LDPC_type)
+    init = Init(noise_set,len_mult_num,LDPC_code,iteration,clip_num,"",LDPC_type)
 
     init.signal_tranmission()
 
@@ -465,21 +438,31 @@ if __name__ == "__main__":
     # name = "third_LDPC_code_56_28"
     # name = "MacKeyCode_816.55.178"
 
-    # 0 -> primary_LDPC_code, 1 -> second_LDPC_code, 2 -> third_LDPC_code
+    # 0 -> MacKayLDPC, 2 -> third_LDPC_code
     LDPC_code = 0
     # 0 -> linear LDPC, 1 -> Product A LDPC, 2 -> Product B LDPC
     LDPC_type = 2
 
     len_mult_num = 1
 
-    clip_num = 8
-    iteration = 20
-    name = "MacKeyCode_96.33.964"
-    name = "Product_codeB_96.33.964"
+    clip_num = 5
+    iteration = 30
     filename = "test_code_96.33.964"
+    # name = "MacKeyCode_96.33.964"
+    name = "Product_codeB_96.33.964"
+    # name = "Test_code_ProductCode"
 
-    noise_set,message_sending_time = 0.85,100
-    LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-
+    # noise_set,message_sending_time = 1.2,10
+    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    # noise_set,message_sending_time = 1,100
+    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
     noise_set,message_sending_time = 0.8,100
     LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    # noise_set,message_sending_time = 1.2,10
+    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    # noise_set,message_sending_time = 0.7,1000
+    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    # noise_set,message_sending_time = 0.65,10000
+    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    # noise_set,message_sending_time = 0.5,1000000
+    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
