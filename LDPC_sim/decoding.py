@@ -61,7 +61,7 @@ class decoding_algorithm(object):
             if int(np.sum(check_matrix)) == 0:
                 break
 
-        return hard_decision_output, final_part_summation
+        return final_part_summation
 
     def sumProductAlgorithmWithIteration(self,input_matrix,iteration):
 
