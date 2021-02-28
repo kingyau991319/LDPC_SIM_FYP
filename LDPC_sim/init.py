@@ -10,7 +10,7 @@ import decoding
 
 class Init:
 
-    def __init__(self,noise_set,mult_num,LDPC_code,iteration,clip_num,f_name="",LDPC_type=0):
+    def __init__(self,noise_set,mult_num,LDPC_code,iteration,clip_num,f_name="",LDPC_type=0,iter_decod=2):
 
         self.noise_set = noise_set
         sigma =  2 * (self.noise_set ** 2)
@@ -18,6 +18,8 @@ class Init:
 
         self.clip_num = clip_num
         self.iteration = iteration
+
+        self.iter_decod = iter_decod
 
         self.wr = 0
         self.wc = 0
@@ -314,8 +316,8 @@ class Init:
 
         # message generator
         xlen, ylen = self.xlen, self.ylen
-        # msg = np.random.randint(2,size=(ylen,ylen))
-        msg = np.zeros((ylen,ylen))
+        msg = np.random.randint(2,size=(ylen,ylen))
+        # msg = np.zeros((ylen,ylen))
 
         msg_copy = msg.copy() # to backup and compare the result
         # msg_copy = msg_copy.transpose()
@@ -337,43 +339,52 @@ class Init:
         msg_that_LLR = msg.copy()
         msg_that_LLR = self._message_to_LLR(msg_that_LLR)
 
-        decoding_msg_row = np.array([])
 
-        for k in range(xlen):
-            decoding_msg_row = np.append(decoding_msg_row,self.decoding_tool.sumProductAlgorithmWithIterationForPC(msg_that_LLR[k],self.iteration)[1],axis=0)
-        decoding_msg_row = np.resize(decoding_msg_row,(xlen,xlen))
-        decoding_msg_row = np.clip(decoding_msg_row,-self.clip_num,self.clip_num)
+        # for iteration in range(self.iter_decod):
+        for iteration in range(self.iter_decod):
 
-        # I use the row_result and do it again for the cols
-        decoding_msg_row = decoding_msg_row.transpose()
+            decoding_msg_row = np.array([])
+            decoding_msg_col = np.array([])
 
-        decoding_msg_col = np.array([])
+            for k in range(xlen):
+                decoding_msg_row = np.append(decoding_msg_row,self.decoding_tool.sumProductAlgorithmWithIterationForPC(msg_that_LLR[k],self.iteration),axis=0)
+            decoding_msg_row = np.resize(decoding_msg_row,(xlen,xlen))
+            decoding_msg_row = np.clip(decoding_msg_row,-self.clip_num,self.clip_num)
 
-        for k in np.arange(ylen):
-            decoding_msg_col = np.append(decoding_msg_col,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_row[k],self.iteration)[1],axis=0)
-        for k in np.arange(ylen):
-            decoding_msg_col = np.append(decoding_msg_col,decoding_msg_row[ylen+k],axis=0)
+            # I use the row_result and do it again for the cols
+            decoding_msg_row = decoding_msg_row.transpose()
 
-        decoding_msg_col = np.resize(decoding_msg_col,(xlen,xlen))
-        decoding_msg_col = np.clip(decoding_msg_col,-self.clip_num,self.clip_num)
 
-        decoding_msg_col = decoding_msg_col.transpose()
-        decoding_msg_row_final = np.array([])
+            for k in np.arange(ylen):
+                decoding_msg_col = np.append(decoding_msg_col,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_row[k],self.iteration),axis=0)
+            for k in np.arange(ylen):
+                decoding_msg_col = np.append(decoding_msg_col,decoding_msg_row[ylen+k],axis=0)
 
-        for k in range(xlen):
-            decoding_msg_row_final = np.append(decoding_msg_row_final,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_col[k],self.iteration)[1],axis=0)
+            decoding_msg_col = np.resize(decoding_msg_col,(xlen,xlen))
+            decoding_msg_col = np.clip(decoding_msg_col,-self.clip_num,self.clip_num)
 
-        decoding_msg_row_final = np.resize(decoding_msg_row_final,(xlen,xlen))
-        decoding_msg_row_final = decoding_msg_row_final.transpose()
-        decoding_msg_row_final = np.clip(decoding_msg_row_final,-self.clip_num,self.clip_num)
+            decoding_msg_col = decoding_msg_col.transpose()
+            msg_that_LLR = decoding_msg_col
 
-        decoding_msg_col_final = np.array([])
-        for k in np.arange(ylen):
-            decoding_msg_col_final = np.append(decoding_msg_col_final,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_row_final[k],self.iteration)[1],axis=0)
 
-        decoding_msg_col_final = np.resize(decoding_msg_col_final,(ylen,xlen))
+        msg_that_LLR = msg_that_LLR.transpose()
+        # decoding_msg_row_final = np.array([])
 
-        decoded_output = np.where(decoding_msg_col_final > 0,0,1)
+        # for k in range(xlen):
+        #     decoding_msg_row_final = np.append(decoding_msg_row_final,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_col[k],self.iteration),axis=0)
+
+        # decoding_msg_row_final = np.resize(decoding_msg_row_final,(xlen,xlen))
+        # decoding_msg_row_final = decoding_msg_row_final.transpose()
+        # decoding_msg_row_final = np.clip(decoding_msg_row_final,-self.clip_num,self.clip_num)
+
+        # decoding_msg_col_final = np.array([])
+        # for k in np.arange(ylen):
+        #     decoding_msg_col_final = np.append(decoding_msg_col_final,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_row_final[k],self.iteration),axis=0)
+
+        # decoding_msg_col_final = np.resize(decoding_msg_col_final,(ylen,xlen))
+        # decoding_msg_col_final = np.clip(decoding_msg_col_final,-self.clip_num,self.clip_num)
+
+        decoded_output = np.where(msg_that_LLR > 0,0,1)
 
         hamming_dist_msg = np.count_nonzero(msg_copy != decoded_output[:ylen,:ylen])
 
@@ -520,11 +531,9 @@ class Init:
         sigma = sigma ** (1/2)
         return sigma
 
-def LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type=1):
+def LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type):
 
     time_start = time.time()
-    wr = 10
-    wc = 5
 
     init = Init(noise_set,len_mult_num,LDPC_code,iteration,clip_num,filename,LDPC_type)
     prob_BER,prob_block_right,prob_detected_block_error,prob_detected_BER,prob_undetected_block_error,prob_undetected_BER = init.signal_tranmission_repeat(message_sending_time,print_flag = 0)
@@ -587,30 +596,31 @@ if __name__ == "__main__":
     # name = "MacKeyCode_816.55.178"
 
     # 0 -> MacKayLDPC, 2 -> third_LDPC_code
-    LDPC_code = 0
+    LDPC_code = 2
     # 0 -> linear LDPC, 1 -> Product A LDPC, 2 -> Product B LDPC 3 -> linear LDPC with QAM-16
-    LDPC_type = 3
+    LDPC_type = 2
 
-    len_mult_num = 1
+    len_mult_num = 4
 
     clip_num = 5
     iteration = 30
-    filename = "test_code_96.33.964"
+    name = "TestCodeProductB"
+    filename = ""
     # name = "MacKeyCode_96.33.964"
-    name = "QAM16_96.33.964"
+    # name = "QAM16_96.33.964"
     # name = "Test_code_ProductCode"
 
-    # noise_set,message_sending_time = 1.2,1000
-    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-    # noise_set,message_sending_time = 1,10000
-    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-    # noise_set,message_sending_time = 0.85,100000
-    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-    # noise_set,message_sending_time = 0.8,100000
-    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-    # noise_set,message_sending_time = 0.75,100000
-    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    #28*28
+
+    noise_set,message_sending_time = 1.2,1000
+    LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    noise_set,message_sending_time = 0.85,10000
+    LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    noise_set,message_sending_time = 0.8,10000
+    LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    noise_set,message_sending_time = 0.75,100000
+    LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
     # noise_set,message_sending_time = 0.7,100000
     # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-    noise_set,message_sending_time = 0.65,1000000
-    LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    # noise_set,message_sending_time = 0.65,1000000
+    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
