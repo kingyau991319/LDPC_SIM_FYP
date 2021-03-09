@@ -122,6 +122,7 @@ class BCH_code:
 
         codeword = prod_codeword_col
         codeword_copy = np.copy(prod_codeword_col)
+        codeword_copy = np.resize(codeword_copy,(15,15))
 
         # add three padding to cross the QAM-16
         codeword = np.append(codeword,0)
@@ -245,7 +246,7 @@ class BCH_code:
                 tmp_msg_count,block_count = self.linear_BCH_code_process2()
             hamming_dist_msg_count = hamming_dist_msg_count + tmp_msg_count
             probaility_block_error = probaility_block_error + block_count
-        print(i)
+            print(i)
         count_time = time.time() - time_start
         if BCH_type == 0:
             prob_BER = hamming_dist_msg_count / (15 * self.message_sending_time)
