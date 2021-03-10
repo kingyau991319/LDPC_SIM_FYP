@@ -1,94 +1,47 @@
-import warnings
-import time
-
 import numpy as np
+from numpy.polynomial import Polynomial
+import json
+import time
 import pandas as pd
 import os
 
-import codegenerator
-import decoding
+class BCH_code:
 
-class Init:
-
-    def __init__(self,noise_set,mult_num,LDPC_code,iteration,clip_num,f_name="",LDPC_type=0,iter_decod=2):
+    def __init__(self,noise_set,message_sending_time,BCH_type,iteration,clip_num):
 
         self.noise_set = noise_set
-        sigma =  2 * (self.noise_set ** 2)
-        self.SNRc = 1 / sigma
-
-        self.clip_num = clip_num
+        self.message_sending_time = message_sending_time
+        self.BCH_type = BCH_type
         self.iteration = iteration
+        self.clip_num = clip_num
 
-        self.iter_decod = iter_decod
+        parity_check_matrix = np.array([
+            [1,0,0,0,1,0,0,1,1,0,1,0,1,1,1],
+            [0,1,0,0,1,1,0,1,0,1,1,1,1,0,0],
+            [0,0,1,0,0,1,1,0,1,0,1,1,1,1,0],
+            [0,0,0,1,0,0,1,1,0,1,0,1,1,1,1],
+            [1,0,0,0,1,1,0,0,0,1,1,0,0,0,1],
+            [0,0,0,1,1,0,0,0,1,1,0,0,0,1,1],
+            [0,0,1,0,1,0,0,1,0,1,0,0,1,0,1],
+            [0,1,1,1,1,0,1,1,1,1,0,1,1,1,1]
+        ])
 
-        self.wr = 0
-        self.wc = 0
-        self.ylen = 0
-        self.xlen = 0
+        self.parity_check_matrix = np.transpose(parity_check_matrix)
+        self.err_corr = []
 
-        self.len_mult_num = mult_num
-        self.LDPC_code = LDPC_code
-        self.LDPC_type = LDPC_type
-        self.f_name = f_name
-
-        #generator matrix and parity-check matrix
-        self.codegenerator = codegenerator.CodeGenerator()
-        if self.LDPC_code == 0:
-            self.parity_check_matrix,self.generator_matrix = self.codegenerator.inputMacKayCode(f_name)
-            self.wr,self.wc,self.xlen,self.ylen = self.codegenerator.wr,self.codegenerator.wc,self.codegenerator.xlen,self.codegenerator.ylen
-        elif self.LDPC_code == 2:
-            self.parity_check_matrix,self.generator_matrix = self.codegenerator.QCLDPCCode(self.len_mult_num)
-            self.wr,self.wc,self.xlen,self.ylen = 4,3,14*self.len_mult_num,7*self.len_mult_num
-
-        #decoding_tool
-        self.decoding_tool = decoding.decoding_algorithm(self.parity_check_matrix,self.ylen,self.xlen,self.clip_num)
-
-
-    # for single case and print the result
-    def signal_tranmission(self):
-        self.signal_tranmission_repeat(1,1)
-
-    def _printCodeSetMatrix(self):
-
-            print("xlen",self.xlen)
-            print("ylen",self.ylen)
-            print("generator_matrix")
-            print(self.generator_matrix)
-            print("parity-check-matrix")
-            print(self.parity_check_matrix)
-            print("--------------------------------------------------------------------")
-            print()
-
-    def _printCodeInfo(self,generator_matrix,msg,msg_copy,final_msg,hamming_distance,msg_lam,ylen):
-
-        print("random generated message")
-        print(msg_copy)
-        print("--------------------------------------------------------------------")
-        print("receiving message")
-        print(msg)
-        print("message_lam")
-        print(msg_lam)
-        print("final message with checking")
-        print(final_msg)
-        print("final message")
-        print(final_msg[:ylen])
-        print("original message")
-        message_copy = np.matmul(msg_copy,self.generator_matrix) % 2
-        print(msg)
-        print("hamming_distance")
-        print(hamming_distance)
-        print()
-
-    def _message_to_LLR(self,rece_message):
-        mess_to_LLR = (2 / (self.noise_set**2)) * rece_message
-        mess_to_LLR = np.clip(mess_to_LLR,-self.clip_num,self.clip_num)
-        return mess_to_LLR
+        # 120 for 15C1 + 15C2
+        for x in range(15):
+            for y in range(15):
+                if x > y:
+                    continue
+                new_arr = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+                new_arr[x] = 1
+                new_arr[y] = 1
+                self.err_corr.append(new_arr)
 
     def _message_to_LLRQAM(self, encode_out_msg,message_len):
-
         mess_to_LLR = np.array([])
         mult_form = 0.5 / (self.noise_set**2)
-        # encode_out_msg = 1/(2 * self.noise_set ** (2)) * encode_out_msg
 
         for k in np.arange(message_len):
             if encode_out_msg[2*k] <= -2:
@@ -119,309 +72,108 @@ class Init:
                 mess_to_LLR = np.append(mess_to_LLR, 8 - 4 * encode_out_msg[2*k+1])
 
         mess_to_LLR = mult_form * mess_to_LLR
-
         mess_to_LLR = np.clip(mess_to_LLR,-self.clip_num,self.clip_num)
         # print(mess_to_LLR)
 
         return mess_to_LLR
 
+    # (15,7) BCH code
+    def BCH_15_7_codeword_generator(self, msg):
 
-    def signal_tranmission_repeat(self,message_sending_time,print_flag):
+        msg = np.poly1d(msg)
 
-        def signalProcessingStatsMark(detected_block_hamming_dist,undetected_block_hamming_dist,detected_block_err_num,undetected_block_err_num,avg_prob_err_sum,codeword_hamming_dist,bit_error_flag_sum,no_bit_error_flag):
-            avg_prob_err_sum = avg_prob_err_sum + codeword_hamming_dist
-            bit_error_flag_sum = bit_error_flag_sum + no_bit_error_flag
-            if no_bit_type_flag == 0:
-                detected_block_err_num = detected_block_err_num + 1
-                detected_block_hamming_dist = detected_block_hamming_dist + codeword_hamming_dist
-                print("iteration:", k, "| hamming_distance:" , codeword_hamming_dist," | detected_error"," | codeword_hard_hamming_dist:",codeword_hard_hamming_dist)
-            elif no_bit_type_flag == 1:
-                undetected_block_err_num = undetected_block_err_num + 1
-                undetected_block_hamming_dist = undetected_block_hamming_dist + codeword_hamming_dist
-                print("iteration:", k, "| hamming_distance:" , codeword_hamming_dist," | undetected_error"," | codeword_hard_hamming_dist:",codeword_hard_hamming_dist)
+        generator_matrix = np.poly1d(np.array([1,1,1,0,1,0,0,0,1]))
+        codeword = msg * generator_matrix
 
-            return avg_prob_err_sum,bit_error_flag_sum,detected_block_err_num,detected_block_hamming_dist,undetected_block_err_num,undetected_block_hamming_dist
+        codeword = codeword.coeffs
+        codeword = np.array(codeword) % 2
+        codeword = codeword[::-1]
+        while len(codeword) < 15:
+            codeword = np.append(codeword,0)
 
-        warnings.filterwarnings('ignore')
+        return codeword
 
-        #return result
-        avg_prob_err_sum = 0
-        bit_error_flag_sum = 0
-        undetected_block_err_num, detected_block_err_num = 0, 0
-        undetected_block_hamming_dist, detected_block_hamming_dist = 0, 0
+    def BCH_15_7_codeword_decoding(self, msg):
 
-        if print_flag == 1:
-            self._printCodeSetMatrix()
+        decoding_code = 0
+        decoding_result = np.matmul(msg,self.parity_check_matrix) % 2
 
-        # 1. LDPC code
-        # 2. Product code A
-        # 3. product code B
+        # violant method to do with the decoding
+        if np.sum(decoding_result) != 0:
+            for x in range(120):
+                msg_copy = msg.copy()
+                msg_copy = np.add(msg_copy,self.err_corr[x]) % 2
+                decoding_result2 = np.matmul(msg_copy,self.parity_check_matrix) % 2
+                sum_of_result = np.sum(decoding_result2)
+                if sum_of_result == 0:
+                    return msg_copy
 
-        if self.LDPC_type == 0:
-            for k in range(message_sending_time):
-                codeword_hamming_dist,no_bit_error_flag,no_bit_type_flag,codeword_hard_hamming_dist = self.messageSendingSimulation(print_flag)
-                avg_prob_err_sum,bit_error_flag_sum,detected_block_err_num,detected_block_hamming_dist,undetected_block_err_num,undetected_block_hamming_dist = signalProcessingStatsMark(detected_block_hamming_dist,undetected_block_hamming_dist,detected_block_err_num,undetected_block_err_num,avg_prob_err_sum,codeword_hamming_dist,bit_error_flag_sum,no_bit_error_flag)
+        return msg
 
-        elif self.LDPC_type == 1:
-            for k in range(message_sending_time):
-                codeword_hamming_dist,no_bit_error_flag,no_bit_type_flag,codeword_hard_hamming_dist = self.messageSendingSimulation1(print_flag)
-                avg_prob_err_sum,bit_error_flag_sum,detected_block_err_num,detected_block_hamming_dist,undetected_block_err_num,undetected_block_hamming_dist = signalProcessingStatsMark(detected_block_hamming_dist,undetected_block_hamming_dist,detected_block_err_num,undetected_block_err_num,avg_prob_err_sum,codeword_hamming_dist,bit_error_flag_sum,no_bit_error_flag)
+    def linear_BCH_code_process(self):
+        # generate message
+        msg = np.random.randint(2, size = 7)
 
-        elif self.LDPC_type == 2:
-            for k in range(message_sending_time):
-                codeword_hamming_dist,no_bit_error_flag,no_bit_type_flag,codeword_hard_hamming_dist = self.messageSendingSimulation2(print_flag)
-                avg_prob_err_sum,bit_error_flag_sum,detected_block_err_num,detected_block_hamming_dist,undetected_block_err_num,undetected_block_hamming_dist = signalProcessingStatsMark(detected_block_hamming_dist,undetected_block_hamming_dist,detected_block_err_num,undetected_block_err_num,avg_prob_err_sum,codeword_hamming_dist,bit_error_flag_sum,no_bit_error_flag)
-
-        elif self.LDPC_type == 3:
-            for k in range(message_sending_time):
-                codeword_hamming_dist,no_bit_error_flag,no_bit_type_flag,codeword_hard_hamming_dist = self.messageSendingSimulation3(print_flag)
-                avg_prob_err_sum,bit_error_flag_sum,detected_block_err_num,detected_block_hamming_dist,undetected_block_err_num,undetected_block_hamming_dist = signalProcessingStatsMark(detected_block_hamming_dist,undetected_block_hamming_dist,detected_block_err_num,undetected_block_err_num,avg_prob_err_sum,codeword_hamming_dist,bit_error_flag_sum,no_bit_error_flag)
-
-        probaility_block_error = bit_error_flag_sum / message_sending_time
-        prob_detected_block_error = detected_block_err_num / message_sending_time
-        prob_undetected_block_error = undetected_block_err_num / message_sending_time
-        
-        prob_BER = avg_prob_err_sum / (message_sending_time * self.ylen)
-        prob_detected_BER = detected_block_hamming_dist / (message_sending_time * self.ylen)
-        prob_undetected_BER = undetected_block_hamming_dist / (message_sending_time * self.ylen)
-
-        return prob_BER,probaility_block_error,prob_detected_block_error,prob_detected_BER,prob_undetected_block_error,prob_undetected_BER
-
-    # 0 -> normal mode
-    def messageSendingSimulation(self,print_flag):
-
-        xlen, ylen = self.xlen, self.ylen
-        parity_check_matrix, generator_matrix = self.parity_check_matrix, self.generator_matrix
-
-        # message generator
-        message = np.random.randint(2, size = ylen)
-        # message = np.zeros(ylen)
-        message_copy = np.copy(message)
-
-        # building_sending_message
-        codeword = np.matmul(message,self.generator_matrix) % 2
-
+        # generator the codeword.
+        codeword = self.BCH_15_7_codeword_generator(msg)
+        msg_copy = np.copy(codeword)
+        # BPSK
         codeword[codeword == 1] = -1
         codeword[codeword == 0] = 1
 
-        rece_codeword = np.add(codeword,np.random.normal(0,self.noise_set,self.xlen))
+        # add noise
+        recvcode = codeword + np.random.normal(0,self.noise_set,15)
+        # recvcode_copy = np.copy(recvcode)
+        hard_dec = np.copy(recvcode)
+        # decoding
+        hard_dec[hard_dec > 0] = 0
+        hard_dec[hard_dec < 0] = 1
+        hard_dec_deocding = self.BCH_15_7_codeword_decoding(hard_dec)
 
-        # for hard decision check to avoid the use of SPA
-        codeword_hard_decision = rece_codeword.copy()
-        codeword_hard_decision[codeword_hard_decision > 0] = 0
-        codeword_hard_decision[codeword_hard_decision < 0] = 1
+        # compare the original message and mark the result
+        hamming_dist_msg = np.count_nonzero(hard_dec_deocding!=msg_copy)
+        block_err = (hamming_dist_msg != 0)
 
-        hard_decision_check = np.matmul(parity_check_matrix,codeword_hard_decision) % 2
-        hard_decision_mult_sum = np.sum(hard_decision_check)
-        if (hard_decision_mult_sum == 0):
-            return 0,0,-1,0
+        return hamming_dist_msg,block_err
 
-        message_LLR = self._message_to_LLR(rece_codeword)
-        out_message = self.decoding_tool.sumProductAlgorithmWithIteration(message_LLR,self.iteration)
-        message_hamming_dist = np.count_nonzero(message_copy!=out_message[:ylen])
-        codeword_hard_hamming_dist = np.count_nonzero(message_copy!=codeword_hard_decision[:ylen])
-        out_message = np.matmul(parity_check_matrix,out_message) % 2
-        out_message_flag = np.sum(out_message)
+    # product code(normal product code) with QAM 16
 
-        block_error_flag = (message_hamming_dist == 0)
-        block_error_type_flag = -1
+    def linear_BCH_code_process2(self):
+        # generate message
+        msg = np.random.randint(2, size = (7,7))
+        prod_codeword = []
 
-        if message_hamming_dist != 0 and out_message_flag > 0:
-            block_error_type_flag = 0 # undetected error
-        elif message_hamming_dist != 0:
-            block_error_type_flag = 1 # detected error
-
-        if print_flag == 1:
-            self._printCodeInfo(self.generator_matrix,message,message_copy,out_message,message_hamming_dist,message_LLR,ylen)
-
-        return message_hamming_dist,block_error_flag,block_error_type_flag,codeword_hard_hamming_dist
-
-    # 1. Product code A
-    def messageSendingSimulation1(self,print_flag):
-
-        # message generator
-        xlen, ylen = self.xlen, self.ylen
-        msg = np.random.randint(2,size=(ylen,ylen))
-
-        msg_copy = msg.copy() # to backup and compare the result
-
-        # mult it and transpose and matmul one more time
-        msg = np.matmul(msg,self.generator_matrix)
-        msg = np.transpose(msg)
-        msg = np.matmul(msg,self.generator_matrix) % 2
-        msg[msg == 1] = -1
-        msg[msg == 0] = 1
-
-        # noise with AWGN
-        msg = msg + np.random.normal(0,self.noise_set,(xlen,xlen))
-
-        # '''
-        #     Encoding part 
-        #     ------------------------------------------------------------
-        #     Decoding part
-        # '''
-
-        # hard-decision
-        hard_decision_output = np.where(msg > 0, 0, 1)
-
-        # # I need to do the SPA for both
-        msg_that_LLR = msg.copy()
-        msg_that_LLR = self._message_to_LLR(msg_that_LLR)
-
-        msg_that_LLR_row = msg_that_LLR[:ylen,:xlen]
-        decoding_msg_row = np.array([])
-        for k in range(ylen):
-            decoding_msg_row = np.append(decoding_msg_row,self.decoding_tool.sumProductAlgorithmWithIterationForPC(msg_that_LLR_row[k],self.iteration)[1],axis=0)
-        decoding_msg_row = np.resize(decoding_msg_row,(ylen,xlen))
-        decoding_msg_row = np.clip(decoding_msg_row,-self.clip_num,self.clip_num)
-
-        ### I use the row_result and do it again for the cols
-
-        msg_that_LLR_col = msg_that_LLR.copy()
-        msg_that_LLR_col = msg_that_LLR_col[:xlen,:ylen].transpose()
-
-        decoding_msg_row = decoding_msg_row[:ylen,:ylen].transpose()
-
-        for y in np.arange(self.ylen):
-            for x in np.arange(self.ylen):
-                msg_that_LLR_col[y][x] = decoding_msg_row[y][x]
-
-        decoding_msg_col = np.array([])
-        for k in np.arange(ylen):
-            decoding_msg_col = np.append(decoding_msg_col,self.decoding_tool.sumProductAlgorithmWithIterationForPC(msg_that_LLR_col[k],self.iteration)[1],axis=0)
-        decoding_msg_col = np.resize(decoding_msg_col,(ylen,xlen))
-
-        decoded_output = np.where(decoding_msg_col > 0,0,1)
-
-        hamming_dist_msg = np.count_nonzero(msg_copy != decoded_output[:ylen,:ylen])
-        hamming_dist_msg = hamming_dist_msg / self.ylen
-
-        if hamming_dist_msg == 0:
-            return 0,0,-1,0
-        else:
-            codeword_hard_hamming_dist = np.count_nonzero(hard_decision_output[:ylen,:ylen]!=decoded_output[:ylen,:ylen])
-            hard_decision_check = np.matmul(self.parity_check_matrix,decoded_output.transpose()) % 2
-            isDetectedError = np.sum(hard_decision_check)
-            if isDetectedError == 0:
-                isDetectedError = 1
-            else:
-                isDetectedError = 0
-
-                #TODO blcok_error
-
-            return hamming_dist_msg,1,isDetectedError,codeword_hard_hamming_dist/self.ylen
-
-    # 2 -> Product Code B
-    def messageSendingSimulation2(self,print_flag):
-
-        # message generator
-        xlen, ylen = self.xlen, self.ylen
-        msg = np.random.randint(2,size=(ylen,ylen))
-        # msg = np.zeros((ylen,ylen))
-
-        msg_copy = msg.copy() # to backup and compare the result
-        # msg_copy = msg_copy.transpose()
-
-        # mult it and transpose and matmul one more time
-        msg = np.matmul(msg,self.generator_matrix)
-        msg = np.transpose(msg)
-        msg = np.matmul(msg,self.generator_matrix) % 2
-        msg[msg == 1] = -1
-        msg[msg == 0] = 1
-
-        # noise with AWGN
-        msg = msg + np.random.normal(0,self.noise_set,(xlen,xlen))
-
-        # hard-decision
-        hard_decision_output = np.where(msg > 0, 0, 1)
-
-        # # I need to do the SPA for both
-        msg_that_LLR = msg.copy()
-        msg_that_LLR = self._message_to_LLR(msg_that_LLR)
+        # generator the codeword.
+        for k in range(7):
+            codeword = self.BCH_15_7_codeword_generator(msg[k])
+            prod_codeword = np.append(prod_codeword,codeword)
 
 
-        # for iteration in range(self.iter_decod):
-        for iteration in range(self.iter_decod):
+        prod_codeword = np.resize(prod_codeword, (7,15))
+        prod_codeword = prod_codeword.transpose()
 
-            decoding_msg_row = np.array([])
-            decoding_msg_col = np.array([])
+        prod_codeword_col = np.array([])
+        for k in range(15):
+            codeword = self.BCH_15_7_codeword_generator(prod_codeword[k])
+            prod_codeword_col = np.append(prod_codeword_col,codeword)
 
-            for k in range(xlen):
-                decoding_msg_row = np.append(decoding_msg_row,self.decoding_tool.sumProductAlgorithmWithIterationForPC(msg_that_LLR[k],self.iteration),axis=0)
-            decoding_msg_row = np.resize(decoding_msg_row,(xlen,xlen))
-            decoding_msg_row = np.clip(decoding_msg_row,-self.clip_num,self.clip_num)
+        # print("len(prod_codeword_col)",len(prod_codeword_col))
 
-            # I use the row_result and do it again for the cols
-            decoding_msg_row = decoding_msg_row.transpose()
+        codeword = prod_codeword_col
+        codeword_copy = np.copy(prod_codeword_col)
+        codeword_copy = np.resize(codeword_copy,(15,15))
 
+        # add three padding to cross the QAM-16
+        codeword = np.append(codeword,0)
+        codeword = np.append(codeword,0)
+        codeword = np.append(codeword,0)
 
-            for k in np.arange(ylen):
-                decoding_msg_col = np.append(decoding_msg_col,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_row[k],self.iteration),axis=0)
-            for k in np.arange(ylen):
-                decoding_msg_col = np.append(decoding_msg_col,decoding_msg_row[ylen+k],axis=0)
-
-            decoding_msg_col = np.resize(decoding_msg_col,(xlen,xlen))
-            decoding_msg_col = np.clip(decoding_msg_col,-self.clip_num,self.clip_num)
-
-            decoding_msg_col = decoding_msg_col.transpose()
-            msg_that_LLR = decoding_msg_col
-
-
-        msg_that_LLR = msg_that_LLR.transpose()
-        # decoding_msg_row_final = np.array([])
-
-        # for k in range(xlen):
-        #     decoding_msg_row_final = np.append(decoding_msg_row_final,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_col[k],self.iteration),axis=0)
-
-        # decoding_msg_row_final = np.resize(decoding_msg_row_final,(xlen,xlen))
-        # decoding_msg_row_final = decoding_msg_row_final.transpose()
-        # decoding_msg_row_final = np.clip(decoding_msg_row_final,-self.clip_num,self.clip_num)
-
-        # decoding_msg_col_final = np.array([])
-        # for k in np.arange(ylen):
-        #     decoding_msg_col_final = np.append(decoding_msg_col_final,self.decoding_tool.sumProductAlgorithmWithIterationForPC(decoding_msg_row_final[k],self.iteration),axis=0)
-
-        # decoding_msg_col_final = np.resize(decoding_msg_col_final,(ylen,xlen))
-        # decoding_msg_col_final = np.clip(decoding_msg_col_final,-self.clip_num,self.clip_num)
-
-        decoded_output = np.where(msg_that_LLR > 0,0,1)
-
-        hamming_dist_msg = np.count_nonzero(msg_copy != decoded_output[:ylen,:ylen])
-
-        if hamming_dist_msg == 0:
-            return 0,0,-1,0
-        else:
-            codeword_hard_hamming_dist = np.count_nonzero(hard_decision_output[:ylen,:ylen]!=msg_copy[:ylen,:ylen])
-            hard_decision_check = np.matmul(self.parity_check_matrix,decoded_output.transpose()) % 2
-            is_detected_err = np.sum(hard_decision_check)
-            if is_detected_err == 0:
-                is_detected_err = 1
-            else:
-                is_detected_err = 0
-
-                #TODO blcok_error
-
-            return hamming_dist_msg / self.ylen,1,is_detected_err,codeword_hard_hamming_dist/self.ylen
-
-
-    def messageSendingSimulation3(self,print_flag):
-
-        xlen, ylen = self.xlen, self.ylen
-        parity_check_matrix, generator_matrix = self.parity_check_matrix, self.generator_matrix
-
-        # message generator
-        # message = np.random.randint(2, size = ylen)
-        message = np.zeros(ylen)
-        message_copy = np.copy(message)
-
-        # building_sending_message
-        codeword = np.matmul(message,self.generator_matrix) % 2
-
-        #QAM 16
-        msg_split_num = int(xlen/4)
+        # encoder
         encode_out_msg = np.array([])
+        # print("codeword_copy")
+        # print(codeword_copy)
 
-        for k in np.arange(msg_split_num):
+        for k in np.arange(57):
 
             if (codeword[4*k] == 0) and (codeword[4*k+1] == 0):
                 encode_out_msg = np.append(encode_out_msg,-3)
@@ -441,16 +193,13 @@ class Init:
             else:
                 encode_out_msg = np.append(encode_out_msg,1)
 
-        msg_split_num = int(xlen/4 * 2)
-
-        rece_codeword = np.add(encode_out_msg,np.random.normal(0,self.noise_set,msg_split_num))
-
-        # for hard decision check to avoid the use of SPA
+        # print("len(encode_out_msg)",len(encode_out_msg))
+        # add noises
+        rece_codeword = encode_out_msg + np.random.normal(0,self.noise_set,114)
+        # decoding for QAM-16
         codeword_hard_decision = np.array([])
-
-        codeword_hard_decision_len = int(len(rece_codeword)/2)
-
-        for k in np.arange(codeword_hard_decision_len):
+        
+        for k in np.arange(57):
             if rece_codeword[2*k] <= -2:
                 codeword_hard_decision = np.append(codeword_hard_decision, 0)
                 codeword_hard_decision = np.append(codeword_hard_decision, 0)
@@ -477,30 +226,55 @@ class Init:
                 codeword_hard_decision = np.append(codeword_hard_decision, 1)
                 codeword_hard_decision = np.append(codeword_hard_decision, 0)
 
-        hard_decision_check = np.matmul(parity_check_matrix,codeword_hard_decision) % 2
-        hard_decision_mult_sum = np.sum(hard_decision_check)
-        if (hard_decision_mult_sum == 0):
-            return 0,0,-1,0
+        recv_code_LLR = self._message_to_LLRQAM(rece_codeword,57)
+        recv_code_LLR = recv_code_LLR[:224]
+        recv_code_LLR = np.resize(recv_code_LLR,(15,15))
+        # recv_code_LLR = np.clip(recv_code_LLR,-self.clip_num,self.clip_num)
 
-        message_LLR = self._message_to_LLRQAM(rece_codeword,codeword_hard_decision_len)
-        out_message = self.decoding_tool.sumProductAlgorithmWithIteration2(message_LLR,self.iteration)
-        message_hamming_dist = np.count_nonzero(message_copy!=out_message[:ylen])
-        codeword_hard_hamming_dist = np.count_nonzero(message_copy!=codeword_hard_decision[:ylen])
-        out_message = np.matmul(parity_check_matrix,out_message) % 2
-        out_message_flag = np.sum(out_message)
+        codeword_hard_decision = codeword_hard_decision[:224]
+        codeword_hard_decision = np.resize(codeword_hard_decision,(15,15))
 
-        block_error_flag = (message_hamming_dist == 0)
-        block_error_type_flag = -1
+        # deocding part
+        decoding_code = codeword_hard_decision.copy()
 
-        if message_hamming_dist != 0 and out_message_flag > 0:
-            block_error_type_flag = 0 # undetected error
-        elif message_hamming_dist != 0:
-            block_error_type_flag = 1 # detected error
+        for n in range(self.iteration):
 
-        if print_flag == 1:
-            self._printCodeInfo(self.generator_matrix,message,message_copy,out_message,message_hamming_dist,message_LLR,ylen)
+            new_row_arr = np.array([])
+            new_col_arr = np.array([])
 
-        return message_hamming_dist,block_error_flag,block_error_type_flag,codeword_hard_hamming_dist
+            for k in range(15):
+                new_row_arr = np.append(new_row_arr,self.BCH_15_7_codeword_decoding(decoding_code[k]))
+
+            new_row_arr = np.resize(new_row_arr,(15,15))
+            new_row_arr = new_row_arr.transpose()
+
+            for k in range(7):
+                new_col_arr = np.append(new_col_arr,self.BCH_15_7_codeword_decoding(new_row_arr[k]))
+            for k in range(8):
+                new_col_arr = np.append(new_col_arr,new_row_arr[k+7],axis=0)
+
+            new_col_arr = np.resize(new_col_arr,(15,15))
+            new_col_arr = new_col_arr.transpose()
+
+            new_col_arr[new_col_arr == 1] = -1
+            new_col_arr[new_col_arr == 0] = 1
+            # print(recv_code_LLR)
+            recv_code_LLR = np.add(recv_code_LLR,new_col_arr)
+
+            # representation of Product Code
+            decoding_code = recv_code_LLR.copy()
+            decoding_code[decoding_code > 0] = 0
+            decoding_code[decoding_code < 0] = 1
+
+
+        recv_code_LLR[recv_code_LLR > 0] = 1
+        recv_code_LLR[recv_code_LLR < 0] = 0
+        # compare the original message and mark the result
+        hamming_dist_msg = np.count_nonzero(recv_code_LLR!=codeword_copy)
+        # print("hamming_dist_msg",hamming_dist_msg)
+        block_err = (hamming_dist_msg != 0)
+
+        return hamming_dist_msg,block_err
 
     def cal_SNR(self):
 
@@ -509,56 +283,58 @@ class Init:
         sigma =  2 * (self.noise_set ** 2)
         SNRc = 1 / sigma
 
-        if self.LDPC_type == 0:
-            SNRb = 2 * SNRc
-        elif self.LDPC_type == 1:
-            SNRb = 3 * SNRc
-        elif self.LDPC_type == 2:
-            SNRb = 4 * SNRc
-        elif self.LDPC_type == 3:
-            SNRb = 2 * SNRc
+        if self.BCH_type == 0:
+            SNRb = 15 / 7 * SNRc
+        # elif self.BCH_type == 1:
+        else:
+            SNRb = 225 / 49 * SNRc
 
         SNRcDB = 10 * np.log10(SNRc)
         SNRbDB = 10 * np.log10(SNRb)
         return round(SNRbDB,4),round(SNRcDB,4)
 
-    def get_block_error(self,prob_block_right,message_sending_time):
-        return 1 - prob_block_right
+    def code_run_process_prepare(self):
+        time_start = time.time()
+        hamming_dist_msg_count = 0
+        probaility_block_error = 0
+        for i in range(self.message_sending_time):
+            if BCH_type == 0:
+                tmp_msg_count,block_count = self.linear_BCH_code_process()
+            elif BCH_type == 1:
+                tmp_msg_count,block_count = self.linear_BCH_code_process2()
+            hamming_dist_msg_count = hamming_dist_msg_count + tmp_msg_count
+            probaility_block_error = probaility_block_error + block_count
+            print(i)
+        count_time = time.time() - time_start
+        if BCH_type == 0:
+            prob_BER = hamming_dist_msg_count / (15 * self.message_sending_time)
+        elif BCH_type == 1:
+            prob_BER = hamming_dist_msg_count / (225 * self.message_sending_time)
+        
+        probaility_block_error = probaility_block_error / self.message_sending_time
+        return count_time,prob_BER,probaility_block_error
 
-    def getNoiseBySNR(self,snr):
-        snr = 4 * (10 ** (snr / 10))
-        sigma = 1/snr
-        sigma = sigma ** (1/2)
-        return sigma
 
-def LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type):
+def code_run_process(noise_set,message_sending_time,BCH_type,name,iteration=5,clip_num=3):
 
-    time_start = time.time()
+    code = BCH_code(noise_set,message_sending_time,BCH_type,iteration,clip_num)
+    count_time,prob_BER,probaility_block_error = code.code_run_process_prepare()
+    SNRcDB,SNRbDB = code.cal_SNR()
 
-    init = Init(noise_set,len_mult_num,LDPC_code,iteration,clip_num,filename,LDPC_type)
-    prob_BER,prob_block_right,prob_detected_block_error,prob_detected_BER,prob_undetected_block_error,prob_undetected_BER = init.signal_tranmission_repeat(message_sending_time,print_flag = 0)
-    SNRbDB,SNRcDB = init.cal_SNR()
-    print("probaility_bit_error",prob_BER * 100, "%")
-
-    print("noise_set",init.noise_set)
-    print("SNRbDB",SNRbDB)
+    print("name:",name)
+    print("clip_num",clip_num)
+    print("BLER",probaility_block_error)
+    print("BER:",prob_BER)
+    print("Count_time:",count_time)
+    print("Message sending time:",message_sending_time)
     print("SNRcDB",SNRcDB)
+    print("SNRbDB",SNRbDB)
 
-    probaility_block_error = init.get_block_error(prob_block_right,message_sending_time)
-    prob_undetected_block_error = init.get_block_error(prob_undetected_block_error,message_sending_time)
-    prob_undetected_block_error = init.get_block_error(prob_undetected_block_error,message_sending_time)
 
-    print("probility_block_error",probaility_block_error)
-    print("message_sending_time",message_sending_time)
+    ylen = 7
+    xlen = 15
 
-    time_end = time.time()
-    count_time = time_end - time_start
-    count_time = round(count_time,2)
-    print("use_time",count_time)
-    ylen = int(init.ylen)
-    xlen = int(init.xlen)
-
-    result_list = [(name,xlen,ylen,message_sending_time,noise_set,prob_BER,SNRcDB,SNRbDB,probaility_block_error,prob_detected_block_error,prob_detected_BER,prob_undetected_block_error,prob_undetected_BER,count_time)]
+    result_list = [(name,xlen,ylen,message_sending_time,noise_set,prob_BER,SNRcDB,SNRbDB,probaility_block_error,0,0,0,0,count_time)]
     column = ['LDPC_code','xlen','ylen','message_sending_time','noise_set','average_probaility_error','SNRcDB','SNRbDB','Prob_block_error','detected_block_error','detected_bit_error','undetected_block_error','undetected_bit_error','count_time']
 
     df = pd.DataFrame(result_list, columns = column)
@@ -568,59 +344,17 @@ def LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,
     else:
         df.to_csv('sim_result.csv', mode='a', header=False)
 
-def runOnlyOneTimeLDPC():
-
-    len_mult_num = 1
-
-    noise_set = 0.3
-    print_flag = 1
-    iteration = 20
-    clip_num = 4
-    LDPC_code = 2
-    LDPC_type = 2
-
-    init = Init(noise_set,len_mult_num,LDPC_code,iteration,clip_num,"",LDPC_type)
-
-    init.signal_tranmission()
 
 if __name__ == "__main__":
 
-    # runOnlyOneTimeLDPC()
+    # test_val
+    message_sending_time = 1
+    # BCH_type -> 0 : BPSK 1 : QAM 16
+    BCH_type = 1
+    name = "BCH_product_code"
 
-    # name = "third_LDPC_code_1792_896"
-    # name = "third_LDPC_code_896_448"
-    # name = "third_LDPC_code_448_224"
-    # name = "third_LDPC_code_224_112"
-    # name = "third_LDPC_code_112_56"
-    # name = "third_LDPC_code_56_28"
-    # name = "MacKeyCode_816.55.178"
-
-    # 0 -> MacKayLDPC, 2 -> third_LDPC_code
-    LDPC_code = 2
-    # 0 -> linear LDPC, 1 -> Product A LDPC, 2 -> Product B LDPC 3 -> linear LDPC with QAM-16
-    LDPC_type = 2
-
-    len_mult_num = 4
-
+    noise_set = 0.75
     clip_num = 5
-    iteration = 30
-    name = "TestCodeProductB"
-    filename = ""
-    # name = "MacKeyCode_96.33.964"
-    # name = "QAM16_96.33.964"
-    # name = "Test_code_ProductCode"
-
-    #28*28
-
-    noise_set,message_sending_time = 1.2,1000
-    LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-    noise_set,message_sending_time = 0.85,10000
-    LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-    noise_set,message_sending_time = 0.8,10000
-    LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-    noise_set,message_sending_time = 0.75,100000
-    LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-    # noise_set,message_sending_time = 0.7,100000
-    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
-    # noise_set,message_sending_time = 0.65,1000000
-    # LDPCCode_running(len_mult_num,noise_set,message_sending_time,iteration,name,LDPC_code,clip_num,filename,LDPC_type)
+    message_sending_time = 100
+    iteration = 100
+    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
