@@ -7,12 +7,13 @@ import os
 
 class BCH_code:
 
-    def __init__(self,noise_set,message_sending_time,BCH_type,iteration):
+    def __init__(self,noise_set,message_sending_time,BCH_type,iteration,clip_num):
 
         self.noise_set = noise_set
         self.message_sending_time = message_sending_time
         self.BCH_type = BCH_type
         self.iteration = iteration
+        self.clip_num = clip_num
 
         parity_check_matrix = np.array([
             [1,0,0,0,1,0,0,1,1,0,1,0,1,1,1],
@@ -37,6 +38,44 @@ class BCH_code:
                 new_arr[x] = 1
                 new_arr[y] = 1
                 self.err_corr.append(new_arr)
+
+    def _message_to_LLRQAM(self, encode_out_msg,message_len):
+        mess_to_LLR = np.array([])
+        mult_form = 0.5 / (self.noise_set**2)
+
+        for k in np.arange(message_len):
+            if encode_out_msg[2*k] <= -2:
+                mess_to_LLR = np.append(mess_to_LLR, 8 * encode_out_msg[2*k] + 8)
+                mess_to_LLR = np.append(mess_to_LLR, 4 * encode_out_msg[2*k] + 8)
+            elif (encode_out_msg[2*k] > -2) and (encode_out_msg[2*k] <= 0):
+                mess_to_LLR = np.append(mess_to_LLR, 4 * encode_out_msg[2*k])
+                mess_to_LLR = np.append(mess_to_LLR, 4 * encode_out_msg[2*k] + 8)
+
+            elif (encode_out_msg[2*k] > 0) and (encode_out_msg[2*k] <= 2):
+                mess_to_LLR = np.append(mess_to_LLR, 4 * encode_out_msg[2*k])
+                mess_to_LLR = np.append(mess_to_LLR, 8 - 4 * encode_out_msg[2*k])
+            else:
+                mess_to_LLR = np.append(mess_to_LLR, 8 * encode_out_msg[2*k] - 8)
+                mess_to_LLR = np.append(mess_to_LLR, 8 - 4 * encode_out_msg[2*k])
+
+            if encode_out_msg[2*k+1] <= -2:
+                mess_to_LLR = np.append(mess_to_LLR, 8 * encode_out_msg[2*k+1] + 8)
+                mess_to_LLR = np.append(mess_to_LLR, 4 * encode_out_msg[2*k+1] + 8)
+            elif (encode_out_msg[2*k+1] > -2) and (encode_out_msg[2*k+1] <= 0):
+                mess_to_LLR = np.append(mess_to_LLR, 4 * encode_out_msg[2*k+1])
+                mess_to_LLR = np.append(mess_to_LLR, 4 * encode_out_msg[2*k+1] + 8)
+            elif (encode_out_msg[2*k+1] > 0) and (encode_out_msg[2*k+1] <= 2):
+                mess_to_LLR = np.append(mess_to_LLR, 4 * encode_out_msg[2*k+1])
+                mess_to_LLR = np.append(mess_to_LLR, 8 - 4 * encode_out_msg[2*k+1])
+            else:
+                mess_to_LLR = np.append(mess_to_LLR, 8 * encode_out_msg[2*k+1] - 8)
+                mess_to_LLR = np.append(mess_to_LLR, 8 - 4 * encode_out_msg[2*k+1])
+
+        mess_to_LLR = mult_form * mess_to_LLR
+        mess_to_LLR = np.clip(mess_to_LLR,-self.clip_num,self.clip_num)
+        # print(mess_to_LLR)
+
+        return mess_to_LLR
 
     # (15,7) BCH code
     def BCH_15_7_codeword_generator(self, msg):
@@ -131,6 +170,8 @@ class BCH_code:
 
         # encoder
         encode_out_msg = np.array([])
+        # print("codeword_copy")
+        # print(codeword_copy)
 
         for k in np.arange(57):
 
@@ -153,9 +194,8 @@ class BCH_code:
                 encode_out_msg = np.append(encode_out_msg,1)
 
         # print("len(encode_out_msg)",len(encode_out_msg))
-        # add noise
+        # add noises
         rece_codeword = encode_out_msg + np.random.normal(0,self.noise_set,114)
-
         # decoding for QAM-16
         codeword_hard_decision = np.array([])
         
@@ -186,34 +226,52 @@ class BCH_code:
                 codeword_hard_decision = np.append(codeword_hard_decision, 1)
                 codeword_hard_decision = np.append(codeword_hard_decision, 0)
 
+        recv_code_LLR = self._message_to_LLRQAM(rece_codeword,57)
+        recv_code_LLR = recv_code_LLR[:224]
+        recv_code_LLR = np.resize(recv_code_LLR,(15,15))
+        # recv_code_LLR = np.clip(recv_code_LLR,-self.clip_num,self.clip_num)
+
         codeword_hard_decision = codeword_hard_decision[:224]
         codeword_hard_decision = np.resize(codeword_hard_decision,(15,15))
 
         # deocding part
         decoding_code = codeword_hard_decision.copy()
-        for k in range(self.iteration):
-            
+
+        for n in range(self.iteration):
+
             new_row_arr = np.array([])
             new_col_arr = np.array([])
 
             for k in range(15):
-                row_hard_dec_deocding = self.BCH_15_7_codeword_decoding(decoding_code[k])
-                new_row_arr = np.append(new_row_arr,row_hard_dec_deocding)
+                new_row_arr = np.append(new_row_arr,self.BCH_15_7_codeword_decoding(decoding_code[k]))
 
-            new_row_arr = np.resize(codeword_hard_decision,(15,15))
+            new_row_arr = np.resize(new_row_arr,(15,15))
             new_row_arr = new_row_arr.transpose()
-            for k in range(7):
-                col_hard_dec_deocding = self.BCH_15_7_codeword_decoding(new_row_arr[k])
-                new_col_arr = np.append(new_col_arr,col_hard_dec_deocding)
-            for k in range(7):
-                new_col_arr = np.append(new_col_arr,new_row_arr[k+7])
 
-            new_col_arr = np.resize(codeword_hard_decision,(15,15))
+            for k in range(7):
+                new_col_arr = np.append(new_col_arr,self.BCH_15_7_codeword_decoding(new_row_arr[k]))
+            for k in range(8):
+                new_col_arr = np.append(new_col_arr,new_row_arr[k+7],axis=0)
+
+            new_col_arr = np.resize(new_col_arr,(15,15))
             new_col_arr = new_col_arr.transpose()
-            decoding_code = new_col_arr
 
+            new_col_arr[new_col_arr == 1] = -1
+            new_col_arr[new_col_arr == 0] = 1
+            # print(recv_code_LLR)
+            recv_code_LLR = np.add(recv_code_LLR,new_col_arr)
+
+            # representation of Product Code
+            decoding_code = recv_code_LLR.copy()
+            decoding_code[decoding_code > 0] = 0
+            decoding_code[decoding_code < 0] = 1
+
+
+        recv_code_LLR[recv_code_LLR > 0] = 1
+        recv_code_LLR[recv_code_LLR < 0] = 0
         # compare the original message and mark the result
-        hamming_dist_msg = np.count_nonzero(decoding_code!=codeword_copy)
+        hamming_dist_msg = np.count_nonzero(recv_code_LLR!=codeword_copy)
+        # print("hamming_dist_msg",hamming_dist_msg)
         block_err = (hamming_dist_msg != 0)
 
         return hamming_dist_msg,block_err
@@ -229,7 +287,7 @@ class BCH_code:
             SNRb = 15 / 7 * SNRc
         # elif self.BCH_type == 1:
         else:
-            SNRb = (15*15) / (7*7) * SNRc
+            SNRb = 225 / 49 * SNRc
 
         SNRcDB = 10 * np.log10(SNRc)
         SNRbDB = 10 * np.log10(SNRb)
@@ -257,13 +315,14 @@ class BCH_code:
         return count_time,prob_BER,probaility_block_error
 
 
-def code_run_process(noise_set,message_sending_time,BCH_type,name,iteration=5):
+def code_run_process(noise_set,message_sending_time,BCH_type,name,iteration=5,clip_num=3):
 
-    code = BCH_code(noise_set,message_sending_time,BCH_type,iteration)
+    code = BCH_code(noise_set,message_sending_time,BCH_type,iteration,clip_num)
     count_time,prob_BER,probaility_block_error = code.code_run_process_prepare()
     SNRcDB,SNRbDB = code.cal_SNR()
 
     print("name:",name)
+    print("clip_num",clip_num)
     print("BLER",probaility_block_error)
     print("BER:",prob_BER)
     print("Count_time:",count_time)
@@ -272,47 +331,30 @@ def code_run_process(noise_set,message_sending_time,BCH_type,name,iteration=5):
     print("SNRbDB",SNRbDB)
 
 
-    # ylen = 7
-    # xlen = 15
+    ylen = 7
+    xlen = 15
 
-    # result_list = [(name,xlen,ylen,message_sending_time,noise_set,prob_BER,SNRcDB,SNRbDB,probaility_block_error,0,0,0,0,count_time)]
-    # column = ['LDPC_code','xlen','ylen','message_sending_time','noise_set','average_probaility_error','SNRcDB','SNRbDB','Prob_block_error','detected_block_error','detected_bit_error','undetected_block_error','undetected_bit_error','count_time']
+    result_list = [(name,xlen,ylen,message_sending_time,noise_set,prob_BER,SNRcDB,SNRbDB,probaility_block_error,0,0,0,0,count_time)]
+    column = ['LDPC_code','xlen','ylen','message_sending_time','noise_set','average_probaility_error','SNRcDB','SNRbDB','Prob_block_error','detected_block_error','detected_bit_error','undetected_block_error','undetected_bit_error','count_time']
 
-    # df = pd.DataFrame(result_list, columns = column)
+    df = pd.DataFrame(result_list, columns = column)
 
-    # if os.path.exists('sim_result.csv') == False:
-    #     df.to_csv('sim_result.csv', mode='a', header=True)
-    # else:
-    #     df.to_csv('sim_result.csv', mode='a', header=False)
+    if os.path.exists('sim_result.csv') == False:
+        df.to_csv('sim_result.csv', mode='a', header=True)
+    else:
+        df.to_csv('sim_result.csv', mode='a', header=False)
 
 
 if __name__ == "__main__":
 
     # test_val
-    noise_set = 1
     message_sending_time = 1
-    iteration = 5
     # BCH_type -> 0 : BPSK 1 : QAM 16
     BCH_type = 1
     name = "BCH_product_code"
 
-    noise_set = 1.2
-    message_sending_time = 1000
-    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration)
-
-    noise_set = 1.1
-    message_sending_time = 1000
-    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration)
-
-    noise_set = 1
-    message_sending_time = 10000
-    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration)
-
-    noise_set = 0.9
-    message_sending_time = 10000
-    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration)
-
-    noise_set = 1.8
-    message_sending_time = 10000
-    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration)
-
+    noise_set = 0.75
+    clip_num = 5
+    message_sending_time = 100
+    iteration = 100
+    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
