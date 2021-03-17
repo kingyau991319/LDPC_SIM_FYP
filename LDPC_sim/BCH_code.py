@@ -27,21 +27,20 @@ class BCH_code:
         ])
 
         self.parity_check_matrix = np.transpose(parity_check_matrix)
-        self.err_corr = []
 
         self.ref = pd.read_csv("decoding_ref.csv")
 
-        # 120 for 15C1 + 15C2
-        for x in range(15):
-            for y in range(15):
-                for z in range(15):
-                    if x > y:
-                        continue
-                    new_arr = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-                    new_arr[x] = 1
-                    new_arr[y] = 1
-                    new_arr[z] = 1
-                    self.err_corr.append(new_arr)
+        # self.err_corr = []
+        # for x in range(15):
+        #     for y in range(15):
+        #         for z in range(15):
+        #             if x > y:
+        #                 continue
+        #             new_arr = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+        #             new_arr[x] = 1
+        #             new_arr[y] = 1
+        #             new_arr[z] = 1
+        #             self.err_corr.append(new_arr)
 
     def change_type_ref(self,msg):
         msg_ref = 0
@@ -49,20 +48,20 @@ class BCH_code:
             msg_ref = msg_ref + (int(msg[k]) << k)
         return msg_ref
 
-    def record_and_check(self,decoding_result,err_index):
+    # def record_and_check(self,decoding_result,err_index):
 
-        msg_ref = self.change_type_ref(decoding_result)
+    #     msg_ref = self.change_type_ref(decoding_result)
 
-        # msg_ref, decoding_result, err_index
-        df2 = pd.read_csv("decoding_ref.csv")
+    #     # msg_ref, decoding_result, err_index
+    #     df2 = pd.read_csv("decoding_ref.csv")
 
-        df_name = df2["msg_ref"].to_numpy()
+    #     df_name = df2["msg_ref"].to_numpy()
 
-        if len(np.where(df_name == msg_ref)[0]) == 0:
-            result_list = [(msg_ref,self.err_corr[err_index])]
-            column = ['msg_ref','err_corr']
-            df = pd.DataFrame(result_list, columns = column)
-            df.to_csv('decoding_ref.csv', mode='a', header=False)
+    #     if len(np.where(df_name == msg_ref)[0]) == 0:
+    #         result_list = [(msg_ref,self.err_corr[err_index])]
+    #         column = ['msg_ref','err_corr']
+    #         df = pd.DataFrame(result_list, columns = column)
+    #         df.to_csv('decoding_ref.csv', mode='a', header=False)
 
     def BCH_15_7_codeword_decoding(self, msg):
 
@@ -71,13 +70,15 @@ class BCH_code:
         msg_ref = self.change_type_ref(decoding_result)
 
         if np.sum(decoding_result) != 0:
+
+            # read the LUT table
             df = df.loc[df['msg_ref'] == msg_ref]
             arr_str = df['err_corr'].to_numpy()[0]
             arr = []
+            # change from string to array
             for k in range(15):
                 num = int(arr_str[1+3*k])
                 arr.append(num)
-
             msg_copy = np.add(arr,msg) % 2
             return msg_copy
 
@@ -91,6 +92,7 @@ class BCH_code:
         #         if sum_of_result == 0:
         #             self.record_and_check(decoding_result,x)
         #             return msg_copy
+
         return msg
 
     def _message_to_LLRQAM(self, encode_out_msg,message_len):
@@ -284,12 +286,7 @@ class BCH_code:
         #   3.5 change the n-th columns word
         # iteration and n + 1
 
-
-        # print("original code")
-        # print(decoding_code)
-
         for n in range(self.iteration):
-            
             
             # j is the j-th row word and j-columns word
             for j in range(15): 
@@ -314,11 +311,9 @@ class BCH_code:
                     new_col_arr = np.append(new_col_arr,decoding_code[k+7],axis=0)
 
                 decoding_code = decoding_code.transpose()
-                # print("decoding_code",j)
-                # print(decoding_code)
 
         # compare the original message and mark the result
-        hamming_dist_msg = np.count_nonzero(decoding_code[:7]!=codeword_copy[:7])
+        hamming_dist_msg = np.count_nonzero(decoding_code!=codeword_copy)
         block_err = (hamming_dist_msg != 0)
 
         return hamming_dist_msg,block_err
@@ -394,15 +389,21 @@ class BCH_code:
                 tmp_msg_count,block_count = self.linear_BCH_code_process()
             elif BCH_type == 1:
                 tmp_msg_count,block_count = self.linear_BCH_code_process2()
+            elif BCH_type == 2:
+                tmp_msg_count,block_count = self.linear_BCH_code_process3()
+
             hamming_dist_msg_count = hamming_dist_msg_count + tmp_msg_count
             probaility_block_error = probaility_block_error + block_count
-            print(i)
+            if tmp_msg_count > 0:
+                print("message: ", i, " | hamming dist: ", tmp_msg_count, " | block err")
         count_time = time.time() - time_start
         if BCH_type == 0:
             prob_BER = hamming_dist_msg_count / (15 * self.message_sending_time)
         elif BCH_type == 1:
-            prob_BER = hamming_dist_msg_count / (105 * self.message_sending_time)
-        
+            prob_BER = hamming_dist_msg_count / (225 * self.message_sending_time)
+        elif BCH_type == 2:
+            prob_BER = hamming_dist_msg_count / (225 * self.message_sending_time)
+
         probaility_block_error = probaility_block_error / self.message_sending_time
         return count_time,prob_BER,probaility_block_error
 
@@ -441,11 +442,11 @@ if __name__ == "__main__":
 
     # test_val
     message_sending_time = 1
-    # BCH_type -> 0 : BPSK 1 : QAM 16
+    # BCH_type -> 0 : BPSK 1 : iBBD-CR 2 : product code
     BCH_type = 1
 
     noise_set = 0.5
-    clip_num = 9
+    clip_num = 7
     # 0.49 -> 1 , 100
     # 0.0012 -> 2 , 100
     # 0.0009 -> 3 , 100
@@ -455,11 +456,11 @@ if __name__ == "__main__":
     # 0.018 0.0002 -> 7 , 1000
     # 0.018 0.0003 -> 7 , 1000
     # 0.017 0.00025 -> 10, 1000
-    iteration = 3
+    iteration = 15
     name = "BCH_product_codeclip_num" + str(clip_num)
 
-    noise_set, message_sending_time = 1.2, 10
-    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
+    # noise_set, message_sending_time = 1.2, 100000
+    # code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
 
     noise_set, message_sending_time = 1, 10
     code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
