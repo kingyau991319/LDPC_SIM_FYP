@@ -29,15 +29,69 @@ class BCH_code:
         self.parity_check_matrix = np.transpose(parity_check_matrix)
         self.err_corr = []
 
+        self.ref = pd.read_csv("decoding_ref.csv")
+
         # 120 for 15C1 + 15C2
         for x in range(15):
             for y in range(15):
-                if x > y:
-                    continue
-                new_arr = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-                new_arr[x] = 1
-                new_arr[y] = 1
-                self.err_corr.append(new_arr)
+                for z in range(15):
+                    if x > y:
+                        continue
+                    new_arr = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+                    new_arr[x] = 1
+                    new_arr[y] = 1
+                    new_arr[z] = 1
+                    self.err_corr.append(new_arr)
+
+    def change_type_ref(self,msg):
+        msg_ref = 0
+        for k in range(8):
+            msg_ref = msg_ref + (int(msg[k]) << k)
+        return msg_ref
+
+    def record_and_check(self,decoding_result,err_index):
+
+        msg_ref = self.change_type_ref(decoding_result)
+
+        # msg_ref, decoding_result, err_index
+        df2 = pd.read_csv("decoding_ref.csv")
+
+        df_name = df2["msg_ref"].to_numpy()
+
+        if len(np.where(df_name == msg_ref)[0]) == 0:
+            result_list = [(msg_ref,self.err_corr[err_index])]
+            column = ['msg_ref','err_corr']
+            df = pd.DataFrame(result_list, columns = column)
+            df.to_csv('decoding_ref.csv', mode='a', header=False)
+
+    def BCH_15_7_codeword_decoding(self, msg):
+
+        df = self.ref
+        decoding_result = np.matmul(msg,self.parity_check_matrix) % 2
+        msg_ref = self.change_type_ref(decoding_result)
+
+        if np.sum(decoding_result) != 0:
+            df = df.loc[df['msg_ref'] == msg_ref]
+            arr_str = df['err_corr'].to_numpy()[0]
+            arr = []
+            for k in range(15):
+                num = int(arr_str[1+3*k])
+                arr.append(num)
+
+            msg_copy = np.add(arr,msg) % 2
+            return msg_copy
+
+        # # violant method to do with the decoding
+        # if np.sum(decoding_result) != 0:
+        #     for x in range(length):
+        #         msg_copy = msg.copy()
+        #         msg_copy = np.add(msg_copy,self.err_corr[x]) % 2
+        #         decoding_result2 = np.matmul(msg_copy,self.parity_check_matrix) % 2
+        #         sum_of_result = np.sum(decoding_result2)
+        #         if sum_of_result == 0:
+        #             self.record_and_check(decoding_result,x)
+        #             return msg_copy
+        return msg
 
     def _message_to_LLRQAM(self, encode_out_msg,message_len):
         mess_to_LLR = np.array([])
@@ -73,7 +127,6 @@ class BCH_code:
 
         mess_to_LLR = mult_form * mess_to_LLR
         mess_to_LLR = np.clip(mess_to_LLR,-self.clip_num,self.clip_num)
-        # print(mess_to_LLR)
 
         return mess_to_LLR
 
@@ -92,23 +145,6 @@ class BCH_code:
             codeword = np.append(codeword,0)
 
         return codeword
-
-    def BCH_15_7_codeword_decoding(self, msg):
-
-        decoding_code = 0
-        decoding_result = np.matmul(msg,self.parity_check_matrix) % 2
-
-        # violant method to do with the decoding
-        if np.sum(decoding_result) != 0:
-            for x in range(120):
-                msg_copy = msg.copy()
-                msg_copy = np.add(msg_copy,self.err_corr[x]) % 2
-                decoding_result2 = np.matmul(msg_copy,self.parity_check_matrix) % 2
-                sum_of_result = np.sum(decoding_result2)
-                if sum_of_result == 0:
-                    return msg_copy
-
-        return msg
 
     def linear_BCH_code_process(self):
         # generate message
@@ -136,10 +172,11 @@ class BCH_code:
 
         return hamming_dist_msg,block_err
 
-    # product code(normal product code) with QAM 16
 
-    def linear_BCH_code_process2(self):
+    def encode_channel_with_QAM16(self):
+
         # generate message
+        # msg = np.zeros((7,7))
         msg = np.random.randint(2, size = (7,7))
         prod_codeword = []
 
@@ -157,8 +194,6 @@ class BCH_code:
             codeword = self.BCH_15_7_codeword_generator(prod_codeword[k])
             prod_codeword_col = np.append(prod_codeword_col,codeword)
 
-        # print("len(prod_codeword_col)",len(prod_codeword_col))
-
         codeword = prod_codeword_col
         codeword_copy = np.copy(prod_codeword_col)
         codeword_copy = np.resize(codeword_copy,(15,15))
@@ -170,8 +205,6 @@ class BCH_code:
 
         # encoder
         encode_out_msg = np.array([])
-        # print("codeword_copy")
-        # print(codeword_copy)
 
         for k in np.arange(57):
 
@@ -193,7 +226,6 @@ class BCH_code:
             else:
                 encode_out_msg = np.append(encode_out_msg,1)
 
-        # print("len(encode_out_msg)",len(encode_out_msg))
         # add noises
         rece_codeword = encode_out_msg + np.random.normal(0,self.noise_set,114)
         # decoding for QAM-16
@@ -234,6 +266,68 @@ class BCH_code:
         codeword_hard_decision = codeword_hard_decision[:224]
         codeword_hard_decision = np.resize(codeword_hard_decision,(15,15))
 
+        return codeword_copy,recv_code_LLR,codeword_hard_decision
+
+
+    def linear_BCH_code_process2(self):
+
+        # deocding part
+        codeword_copy,recv_code_LLR,codeword_hard_decision = self.encode_channel_with_QAM16()
+        decoding_code = codeword_hard_decision.copy()
+        recv_code_LLR_transpose = recv_code_LLR.copy().transpose()
+
+
+        # 1. decode row first
+        # 2. tranpose and keep the LLR and row
+        #   2.5 change the n-th row word
+        # 3. change to decode column
+        #   3.5 change the n-th columns word
+        # iteration and n + 1
+
+
+        # print("original code")
+        # print(decoding_code)
+
+        for n in range(self.iteration):
+            
+            
+            # j is the j-th row word and j-columns word
+            for j in range(15): 
+                new_row_arr = np.array([])
+                new_col_arr = np.array([])
+
+                for k in range(15):
+                    tmp_row_array = self.BCH_15_7_codeword_decoding(decoding_code[k])
+                    new_row_arr = np.append(new_row_arr,tmp_row_array)
+                    decoding_code[k][j] = np.where(tmp_row_array[j] == 0, recv_code_LLR[k][j] + 1, recv_code_LLR[k][j] - 1)
+                    decoding_code[k][j] = np.where(tmp_row_array[j] > 0, 1, 0)
+
+                decoding_code = decoding_code.transpose()
+
+                for k in range(7):
+                    tmp_col_array = self.BCH_15_7_codeword_decoding(decoding_code[k])
+                    new_col_arr = np.append(new_col_arr,tmp_col_array)
+                    decoding_code[k][j] = np.where(tmp_col_array[j] == 0, recv_code_LLR_transpose[k][j] + 1, recv_code_LLR_transpose[k][j] - 1)
+                    decoding_code[k][j] = np.where(tmp_col_array[j] > 0, 1, 0)
+
+                for k in range(8):
+                    new_col_arr = np.append(new_col_arr,decoding_code[k+7],axis=0)
+
+                decoding_code = decoding_code.transpose()
+                # print("decoding_code",j)
+                # print(decoding_code)
+
+        # compare the original message and mark the result
+        hamming_dist_msg = np.count_nonzero(decoding_code[:7]!=codeword_copy[:7])
+        block_err = (hamming_dist_msg != 0)
+
+        return hamming_dist_msg,block_err
+
+    def linear_BCH_code_process3(self):
+
+        codeword_copy,recv_code_LLR,codeword_hard_decision = self.encode_channel_with_QAM16()
+        # return codeword_hard_decision rece_codeword
+
         # deocding part
         decoding_code = codeword_hard_decision.copy()
 
@@ -244,7 +338,6 @@ class BCH_code:
 
             for k in range(15):
                 new_row_arr = np.append(new_row_arr,self.BCH_15_7_codeword_decoding(decoding_code[k]))
-
             new_row_arr = np.resize(new_row_arr,(15,15))
             new_row_arr = new_row_arr.transpose()
 
@@ -258,8 +351,8 @@ class BCH_code:
 
             new_col_arr[new_col_arr == 1] = -1
             new_col_arr[new_col_arr == 0] = 1
-            # print(recv_code_LLR)
             recv_code_LLR = np.add(recv_code_LLR,new_col_arr)
+            recv_code_LLR = np.clip(recv_code_LLR,-self.clip_num,self.clip_num)
 
             # representation of Product Code
             decoding_code = recv_code_LLR.copy()
@@ -269,9 +362,8 @@ class BCH_code:
 
         recv_code_LLR[recv_code_LLR > 0] = 1
         recv_code_LLR[recv_code_LLR < 0] = 0
-        # compare the original message and mark the result
+
         hamming_dist_msg = np.count_nonzero(recv_code_LLR!=codeword_copy)
-        # print("hamming_dist_msg",hamming_dist_msg)
         block_err = (hamming_dist_msg != 0)
 
         return hamming_dist_msg,block_err
@@ -309,7 +401,7 @@ class BCH_code:
         if BCH_type == 0:
             prob_BER = hamming_dist_msg_count / (15 * self.message_sending_time)
         elif BCH_type == 1:
-            prob_BER = hamming_dist_msg_count / (225 * self.message_sending_time)
+            prob_BER = hamming_dist_msg_count / (105 * self.message_sending_time)
         
         probaility_block_error = probaility_block_error / self.message_sending_time
         return count_time,prob_BER,probaility_block_error
@@ -351,10 +443,39 @@ if __name__ == "__main__":
     message_sending_time = 1
     # BCH_type -> 0 : BPSK 1 : QAM 16
     BCH_type = 1
-    name = "BCH_product_code"
 
-    noise_set = 0.75
-    clip_num = 5
-    message_sending_time = 100
-    iteration = 100
+    noise_set = 0.5
+    clip_num = 9
+    # 0.49 -> 1 , 100
+    # 0.0012 -> 2 , 100
+    # 0.0009 -> 3 , 100
+    # 0.00013 -> 5 , 100
+    # 0.019 0.0002 -> 5 , 1000
+    # 0.020 0.0002 -> 6 , 1000
+    # 0.018 0.0002 -> 7 , 1000
+    # 0.018 0.0003 -> 7 , 1000
+    # 0.017 0.00025 -> 10, 1000
+    iteration = 3
+    name = "BCH_product_codeclip_num" + str(clip_num)
+
+    noise_set, message_sending_time = 1.2, 10
     code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
+
+    noise_set, message_sending_time = 1, 10
+    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
+
+    noise_set, message_sending_time = 0.8, 100
+    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
+
+    noise_set, message_sending_time = 0.75, 1000
+    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
+
+    noise_set, message_sending_time = 0.7, 1000
+    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
+
+    noise_set, message_sending_time = 0.6, 1000
+    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
+
+    noise_set, message_sending_time = 0.5, 10000
+    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
+
