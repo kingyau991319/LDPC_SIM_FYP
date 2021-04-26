@@ -5,17 +5,19 @@ import time
 import pandas as pd
 import os
 
+import numpy.polynomial.polynomial as pp
+from numpy.polynomial import Polynomial as P
+
 import lookup_table_for_IBBR as funcLUC
 
 class BCH_code:
 
-    def __init__(self,noise_set,message_sending_time,BCH_type,iteration,clip_num):
+    def __init__(self,noise_set,message_sending_time,BCH_type,iteration):
 
         self.noise_set = noise_set
         self.message_sending_time = message_sending_time
         self.BCH_type = BCH_type
         self.iteration = iteration
-        self.clip_num = clip_num
 
         parity_check_matrix = np.array([
             [1,0,0,0,1,0,0,1,1,0,1,0,1,1,1],
@@ -28,21 +30,29 @@ class BCH_code:
             [0,1,1,1,1,0,1,1,1,1,0,1,1,1,1]
         ])
 
+        syndrome_mapping_matrix = np.array([
+            [1,0,0,0],
+            [0,1,0,0],
+            [0,0,1,0],
+            [0,0,0,1],
+            [1,1,0,0],
+            [0,1,1,0],
+            [0,0,1,1],
+            [1,1,0,1],
+            [1,0,1,0],
+            [0,1,0,1],
+            [1,1,1,0],
+            [0,1,1,1],
+            [1,1,1,1],
+            [1,0,1,1],
+            [1,0,0,1],
+        ])
+
+        self.syndrome_mapping_matrix = syndrome_mapping_matrix
+
         self.parity_check_matrix = np.transpose(parity_check_matrix)
 
         self.ref = pd.read_csv("decoding_ref.csv")
-
-        self.err_corr = []
-        for x in range(15):
-            for y in range(15):
-                for z in range(15):
-                    if x > y:
-                        continue
-                    new_arr = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-                    new_arr[x] = 1
-                    new_arr[y] = 1
-                    new_arr[z] = 1
-                    self.err_corr.append(new_arr)
 
     def change_type_ref(self,msg):
         msg_ref = 0
@@ -50,53 +60,127 @@ class BCH_code:
             msg_ref = msg_ref + (int(msg[k]) << k)
         return msg_ref
 
-    # def record_and_check(self,decoding_result,err_index):
+    def BCH_15_7_codeword_decoding(self, codeword):
 
-    #     msg_ref = self.change_type_ref(decoding_result)
+        def poly_to_numpy_arr(poly, length):
+            arr = poly.coeffs
+            arr = arr[::-1]
+            arr = np.abs(arr) % 2
+            while len(arr) < length:
+                arr = np.append(arr, 0)
+            return arr
 
-    #     # msg_ref, decoding_result, err_index
-    #     df2 = pd.read_csv("decoding_ref.csv")
+        # test case
+        # codeword = np.array([0,0,0,1,0,1,0,0,0,0,0,0,1,0,0])
+        codeword = codeword[::-1]
 
-    #     df_name = df2["msg_ref"].to_numpy()
 
-    #     if len(np.where(df_name == msg_ref)[0]) == 0:
-    #         result_list = [(msg_ref,self.err_corr[err_index])]
-    #         column = ['msg_ref','err_corr']
-    #         df = pd.DataFrame(result_list, columns = column)
-    #         df.to_csv('decoding_ref.csv', mode='a', header=False)
+        minimal_polynomials1 = np.poly1d(np.array([1,0,0,1,1]))
+        minimal_polynomials2 = np.poly1d(np.array([1,1,1,1,1]))
 
-    def BCH_15_7_codeword_decoding(self, msg):
+        syndrome = np.matmul(codeword,self.parity_check_matrix) % 2
 
-        df = self.ref
-        decoding_result = np.matmul(msg,self.parity_check_matrix) % 2
+        if np.sum(syndrome) != 0:
 
-        msg_ref = self.change_type_ref(decoding_result)
+            # reverse the code for polynomial showing in numpy mode
+            codeword_poly= np.poly1d(codeword)
+            codeword_poly1 = codeword_poly / minimal_polynomials1
+            codeword_poly2 = codeword_poly / minimal_polynomials2
+            
+            codeword_poly1,codeword_poly2 = poly_to_numpy_arr(codeword_poly1[1],4),poly_to_numpy_arr(codeword_poly2[1],4)
+            
+            # poly for power
+            syndrome1 = codeword_poly1.copy()
+            syndrome2 = codeword_poly1.copy()
+            syndrome3 = codeword_poly2.copy()
+            syndrome4 = codeword_poly1.copy()
 
-        if np.sum(decoding_result) != 0:
+            while len(syndrome1) < 15:
+                syndrome1 = np.append(syndrome1, 0)
+                syndrome2 = np.append(syndrome2, 0)
+                syndrome3 = np.append(syndrome3, 0)
+                syndrome4 = np.append(syndrome4, 0)
 
-            # read the LUT table
-            df = df.loc[df['msg_ref'] == msg_ref]
-            arr_str = df['err_corr'].to_numpy()[0]
-            arr = []
-            # change from string to array
-            for k in range(15):
-                num = int(arr_str[1+3*k])
-                arr.append(num)
-            msg_copy = np.add(arr,msg) % 2
-            return msg_copy
+            for k in np.arange(4):
+                if k == 0:
+                    continue
+                if int(syndrome2[k]) == 1:
+                    syndrome2[k] = 0
+                    syndrome2[k * 2] = 1
+                if int(syndrome3[k]) == 1:
+                    syndrome3[k] = 0
+                    syndrome3[k * 3] = 1
+                if int(syndrome4[k]) == 1:
+                    syndrome4[k] = 0
+                    syndrome4[k * 4] = 1
 
-        # # violant method to do with the decoding
-        # if np.sum(decoding_result) != 0:
-        #     for x in range(length):
-        #         msg_copy = msg.copy()
-        #         msg_copy = np.add(msg_copy,self.err_corr[x]) % 2
-        #         decoding_result2 = np.matmul(msg_copy,self.parity_check_matrix) % 2
-        #         sum_of_result = np.sum(decoding_result2)
-        #         if sum_of_result == 0:
-        #             self.record_and_check(decoding_result,x)
-        #             return msg_copy
+            # mult the ref list and output the final result of the syndrome
+            syndrome1 = np.matmul(syndrome1,self.syndrome_mapping_matrix) % 2
+            syndrome2 = np.matmul(syndrome2,self.syndrome_mapping_matrix) % 2
+            syndrome3 = np.matmul(syndrome3,self.syndrome_mapping_matrix) % 2
+            syndrome4 = np.matmul(syndrome4,self.syndrome_mapping_matrix) % 2
 
-        return msg
+            for k in np.arange(14):
+                if np.array_equal(syndrome1,self.syndrome_mapping_matrix[k]):
+                    syndrome1 = np.zeros(15)
+                    syndrome1[k] = 1
+                if np.array_equal(syndrome2,self.syndrome_mapping_matrix[k]):
+                    syndrome2 = np.zeros(15)
+                    syndrome2[k] = 1
+                if np.array_equal(syndrome3,self.syndrome_mapping_matrix[k]):
+                    syndrome3 = np.zeros(15)
+                    syndrome3[k] = 1
+                if np.array_equal(syndrome4,self.syndrome_mapping_matrix[k]):
+                    syndrome4 = np.zeros(15)
+                    syndrome4[k] = 1
+
+            syndrome1 = syndrome1[::-1]
+            syndrome2 = syndrome2[::-1]
+            syndrome3 = syndrome3[::-1]
+            syndrome4 = syndrome4[::-1]
+
+            syndrome1_poly = np.poly1d(syndrome1)
+            syndrome2_poly = np.poly1d(syndrome2)
+            syndrome3_poly = np.poly1d(syndrome3)
+            syndrome4_poly = np.poly1d(syndrome4)
+
+            # part2. building the elementary symmetric function
+            u,p,lu0 = -1,-1,0
+
+            d0 = np.poly1d([1])
+            simga0 = np.poly1d([1])
+            lu1 = 0
+            
+            
+            
+            print(elementarySymmetricFunc1)
+
+            
+
+
+            # elementarySymmetricFunc2 = syndrome1_poly * syndrome1_poly + syndrome2_poly
+            # elementarySymmetricFunc2 = elementarySymmetricFunc2
+            # elementarySymmetricFunc3 = syndrome3_poly + syndrome2_poly * elementarySymmetricFunc1 + elementarySymmetricFunc2 * syndrome1_poly
+            # elementarySymmetricFunc3 = elementarySymmetricFunc3
+            # elementarySymmetricFunc4 = (elementarySymmetricFunc1 ** 2) * syndrome2_poly
+
+            # elementarySymmetricFunc = elementarySymmetricFunc1 + elementarySymmetricFunc2 * np.poly1d(np.array([1,0])) + elementarySymmetricFunc3 * np.poly1d(np.array([1,0,0])) + elementarySymmetricFunc4 * np.poly1d(np.array([1,0,0,0]))
+            # elementarySymmetricFunc = poly_to_numpy_arr(elementarySymmetricFunc, 15) % 2
+            # elementarySymmetricFunc = np.poly1d(elementarySymmetricFunc[::-1])
+
+            # print("elementarySymmetricFunc1")
+            # print(elementarySymmetricFunc1)
+            # print("elementarySymmetricFunc2")
+            # print(elementarySymmetricFunc2)
+            # print("elementarySymmetricFunc3")
+            # print(elementarySymmetricFunc3)
+            # print("elementarySymmetricFunc4")
+            # print(elementarySymmetricFunc4)
+
+            # print(elementarySymmetricFunc)
+
+
+        return codeword
 
     def _message_to_LLRQAM(self, encode_out_msg,message_len):
         mess_to_LLR = np.array([])
@@ -131,7 +215,7 @@ class BCH_code:
                 mess_to_LLR = np.append(mess_to_LLR, 8 - 4 * encode_out_msg[2*k+1])
 
         mess_to_LLR = mult_form * mess_to_LLR
-        mess_to_LLR = np.clip(mess_to_LLR,-self.clip_num,self.clip_num)
+        mess_to_LLR = np.clip(mess_to_LLR,-1,1)
 
         return mess_to_LLR
 
@@ -266,7 +350,6 @@ class BCH_code:
         recv_code_LLR = self._message_to_LLRQAM(rece_codeword,57)
         recv_code_LLR = recv_code_LLR[:224]
         recv_code_LLR = np.resize(recv_code_LLR,(15,15))
-        # recv_code_LLR = np.clip(recv_code_LLR,-self.clip_num,self.clip_num)
 
         codeword_hard_decision = codeword_hard_decision[:224]
         codeword_hard_decision = np.resize(codeword_hard_decision,(15,15))
@@ -355,7 +438,7 @@ class BCH_code:
             new_col_arr[new_col_arr == 1] = -1
             new_col_arr[new_col_arr == 0] = 1
             recv_code_LLR = np.add(recv_code_LLR,new_col_arr)
-            recv_code_LLR = np.clip(recv_code_LLR,-self.clip_num,self.clip_num)
+            recv_code_LLR = np.clip(recv_code_LLR,-1,1)
 
             # representation of Product Code
             decoding_code = recv_code_LLR.copy()
@@ -416,14 +499,13 @@ class BCH_code:
         return count_time,prob_BER,probaility_block_error
 
 
-def code_run_process(noise_set,message_sending_time,BCH_type,name,iteration=5,clip_num=3):
+def code_run_process(noise_set,message_sending_time,BCH_type,name,iteration=5):
 
-    code = BCH_code(noise_set,message_sending_time,BCH_type,iteration,clip_num)
+    code = BCH_code(noise_set,message_sending_time,BCH_type,iteration)
     count_time,prob_BER,probaility_block_error = code.code_run_process_prepare()
     SNRcDB,SNRbDB = code.cal_SNR()
 
     print("name:",name)
-    print("clip_num",clip_num)
     print("BLER",probaility_block_error)
     print("BER:",prob_BER)
     print("Count_time:",count_time)
@@ -432,18 +514,18 @@ def code_run_process(noise_set,message_sending_time,BCH_type,name,iteration=5,cl
     print("SNRbDB",SNRbDB)
 
 
-    ylen = 7
-    xlen = 15
+    # ylen = 7
+    # xlen = 15
 
-    result_list = [(name,xlen,ylen,message_sending_time,noise_set,prob_BER,SNRcDB,SNRbDB,probaility_block_error,0,0,0,0,count_time)]
-    column = ['LDPC_code','xlen','ylen','message_sending_time','noise_set','average_probaility_error','SNRcDB','SNRbDB','Prob_block_error','detected_block_error','detected_bit_error','undetected_block_error','undetected_bit_error','count_time']
+    # result_list = [(name,xlen,ylen,message_sending_time,noise_set,prob_BER,SNRcDB,SNRbDB,probaility_block_error,0,0,0,0,count_time)]
+    # column = ['LDPC_code','xlen','ylen','message_sending_time','noise_set','average_probaility_error','SNRcDB','SNRbDB','Prob_block_error','detected_block_error','detected_bit_error','undetected_block_error','undetected_bit_error','count_time']
 
-    df = pd.DataFrame(result_list, columns = column)
+    # df = pd.DataFrame(result_list, columns = column)
 
-    if os.path.exists('sim_result.csv') == False:
-        df.to_csv('sim_result.csv', mode='a', header=True)
-    else:
-        df.to_csv('sim_result.csv', mode='a', header=False)
+    # if os.path.exists('sim_result.csv') == False:
+    #     df.to_csv('sim_result.csv', mode='a', header=True)
+    # else:
+    #     df.to_csv('sim_result.csv', mode='a', header=False)
 
 
 if __name__ == "__main__":
@@ -453,8 +535,7 @@ if __name__ == "__main__":
     # BCH_type -> 0 : BPSK 1 : iBBD-CR 2 : product code
     BCH_type = 0
 
-    noise_set = 0.3
-    clip_num = 7
+    noise_set = 1
     # 0.49 -> 1 , 100
     # 0.0012 -> 2 , 100
     # 0.0009 -> 3 , 100
@@ -464,11 +545,11 @@ if __name__ == "__main__":
     # 0.018 0.0002 -> 7 , 1000
     # 0.018 0.0003 -> 7 , 1000
     # 0.017 0.00025 -> 10, 1000
-    iteration = 15
-    name = "BCH_product_codeclip_num" + str(clip_num)
+    iteration = 1
+    name = "BCH_product_code"
 
-    noise_set, message_sending_time = 0.4, 100000
-    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
+    noise_set, message_sending_time = 0.6, 1
+    code_run_process(noise_set,message_sending_time,BCH_type,name,iteration)
 
     # noise_set, message_sending_time = 0.8, 100
     # code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
@@ -484,3 +565,4 @@ if __name__ == "__main__":
 
     # noise_set, message_sending_time = 0.5, 10000
     # code_run_process(noise_set,message_sending_time,BCH_type,name,iteration,clip_num)
+
